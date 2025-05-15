@@ -1,0 +1,176 @@
+# Check if script is running as Administrator
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    # Restart script as Administrator
+    Start-Process powershell.exe "-File `"$PSCommandPath`"" -Verb RunAs
+    exit
+}
+
+
+#Part 1: 정보 입력
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+
+$VMName = Read-Host "Enter the name of the virtual machine"
+$VMProcessorCount = Read-Host "Enter the number of processors"
+
+
+$MemoryOptions = [ordered]@{
+    "2 GB" = 2GB
+    "4 GB" = 4GB
+    "8 GB" = 8GB
+    "10 GB" = 10GB
+    "16 GB" = 16GB
+    "32 GB" = 32GB
+}
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'Select the amount of memory'
+$form.Size = New-Object System.Drawing.Size(300, 200)
+$form.StartPosition = 'CenterScreen'
+
+$okButton = New-Object System.Windows.Forms.Button
+$okButton.Location = New-Object System.Drawing.Point(75, 120)
+$okButton.Size = New-Object System.Drawing.Size(75, 23)
+$okButton.Text = 'OK'
+$okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form.AcceptButton = $okButton
+$form.Controls.Add($okButton)
+
+$cancelButton = New-Object System.Windows.Forms.Button
+$cancelButton.Location = New-Object System.Drawing.Point(150, 120)
+$cancelButton.Size = New-Object System.Drawing.Size(75, 23)
+$cancelButton.Text = 'Cancel'
+$cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$form.CancelButton = $cancelButton
+$form.Controls.Add($cancelButton)
+
+$label = New-Object System.Windows.Forms.Label
+$label.Location = New-Object System.Drawing.Point(10, 20)
+$label.Size = New-Object System.Drawing.Size(280, 20)
+$label.Text = 'Please select the amount of memory:'
+$form.Controls.Add($label)
+
+$listBox = New-Object System.Windows.Forms.ListBox
+$listBox.Location = New-Object System.Drawing.Point(10, 40)
+$listBox.Size = New-Object System.Drawing.Size(260, 20)
+$listBox.Height = 80
+
+[void] $listBox.Items.AddRange($MemoryOptions.Keys)
+$listBox.SelectedIndex = 0
+$form.Add_Shown({ $listBox.Focus() })
+
+$form.Controls.Add($listBox)
+
+$form.Topmost = $true
+
+$result = $form.ShowDialog()
+
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    $SelectedMemory = $listBox.SelectedItem
+    $VMMemoryStartupBytes = $MemoryOptions[$SelectedMemory]
+
+    $Switches = Get-VMSwitch | Select-Object -Property Name | Sort-Object -Property Name
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'Select a virtual switch'
+    $form.Size = New-Object System.Drawing.Size(300,200)
+    $form.StartPosition = 'CenterScreen'
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Location = New-Object System.Drawing.Point(75, 120)
+    $okButton.Size = New-Object System.Drawing.Size(75, 23)
+    $okButton.Text = 'OK'
+    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.AcceptButton = $okButton
+    $form.Controls.Add($okButton)
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Location = New-Object System.Drawing.Point(150, 120)
+    $cancelButton.Size = New-Object System.Drawing.Size(75, 23)
+    $cancelButton.Text = 'Cancel'
+    $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.CancelButton = $cancelButton
+    $form.Controls.Add($cancelButton)
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Location = New-Object System.Drawing.Point(10, 20)
+    $label.Size = New-Object System.Drawing.Size(280, 20)
+    $label.Text = 'Please select a virtual switch:'
+    $form.Controls.Add($label)
+
+    $listBox1 = New-Object System.Windows.Forms.ListBox
+    $listBox1.Location = New-Object System.Drawing.Point(10, 40)
+    $listBox1.Size = New-Object System.Drawing.Size(260, 20)
+    $listBox1.Height = 80
+    
+	# 정렬된 스위치를 리스트 박스에 추가
+	[void] $listBox1.Items.AddRange(($Switches | ForEach-Object { $_.Name }))
+    $listBox1.SelectedIndex = 0
+	$form.Add_Shown({ $listBox1.Focus() })
+    
+    $form.Controls.Add($listBox1)
+
+    $form.Topmost = $true
+
+    $result = $form.ShowDialog()
+    $SelectedSwitch = $listBox1.SelectedItem
+}
+
+
+#Part 2: Copy VHDX
+
+$openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+$openFileDialog.InitialDirectory = "F:\sysprepVHD\"
+$openFileDialog.Filter = "VHDX files (*.vhdx)|*.vhdx"
+$openFileDialog.Title = "Select the VHDX file"
+
+
+
+if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    $SelectedFilePath = $openFileDialog.FileName
+    
+    $SaveFileDialog = New-Object System.Windows.Forms.SaveFileDialog
+    $SaveFileDialog.InitialDirectory = "D:\"
+    $SaveFileDialog.Filter = "VHDX files (*.vhdx)|*.vhdx"
+    $SaveFileDialog.FileName = [System.IO.Path]::GetFileName($SelectedFilePath)
+
+    if ($SaveFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $NewFolderPath = [System.IO.Path]::GetDirectoryName($SaveFileDialog.FileName)
+        $NewFileName = [System.IO.Path]::GetFileName($SaveFileDialog.FileName)
+
+        if (!(Test-Path $NewFolderPath)) {
+            New-Item -ItemType Directory -Path $NewFolderPath
+        }
+
+        $BufferSize = 1024 * 1024
+        $Buffer = New-Object byte[] $BufferSize
+        $SourceStream = [System.IO.File]::OpenRead($SelectedFilePath)
+        $DestinationStream = [System.IO.File]::Create($NewFolderPath + "\" + $NewFileName)
+        $BytesRead = 0
+        $TotalBytes = [System.Math]::Min($SourceStream.Length, [System.Int64]::MaxValue)
+        $BytesCopied = 0
+
+        while (($BytesRead = $SourceStream.Read($Buffer, 0, $BufferSize)) -gt 0) {
+            $DestinationStream. Write($Buffer, 0, $BytesRead)
+            $BytesCopied += $BytesRead
+            Write-Progress -Activity "Copying $SelectedFile" -PercentComplete ([System.Int32](100 * $BytesCopied / $TotalBytes))
+        }
+
+        $SourceStream. Close()
+        $DestinationStream. Close()
+    }
+}
+
+
+
+#Part 3: New-VM
+$VHDLocation = Split-Path -Path $DestinationStream.Name 
+$VHDs = $DestinationStream.Name 
+
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        
+            New-VM -Name $VMName -MemoryStartupBytes $VMMemoryStartupBytes -Generation 2 -Path $VHDLocation -SwitchName $SelectedSwitch -VHDPath $VHDs
+            Set-VM -Name $VMName -ProcessorCount $VMProcessorCount 
+            Start-VM -Name $VMName
+          
+}
